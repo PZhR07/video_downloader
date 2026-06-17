@@ -33,7 +33,7 @@ from fallback_extractor import extract_fallback_video, download_direct_url
 # ══════════════════════════════════════════════════════
 #  تنظیمات
 # ══════════════════════════════════════════════════════
-BOT_TOKEN: str        = "8634241420:AAES8Fhave30QcHMP-EZuEN1jYa-mlVRY9U"
+BOT_TOKEN: str        = "YOUR_BOT_TOKEN_HERE"
 MAX_FILE_SIZE_MB: int = 300
 BASE_DIR: Path        = Path(__file__).parent
 DB_PATH: str          = str(BASE_DIR / "bot_history.db")
