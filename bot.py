@@ -588,7 +588,6 @@ async def _run_fallback(
         file_path = None
 
     if not file_path:
-        
         db_save(user_id, url, label, title_for_db, 0, "fallback_dl_error")
         return None
 
@@ -606,10 +605,24 @@ async def _send_video(
     title_for_db: str,
     file_path: str,
 ) -> None:
+    """
+    ✅ ارسال ویدیو به چت تلگرام با retry logic و error handling بهتر
+    """
+    # ✅ بررسی موجود بودن فایل
+    if not os.path.exists(file_path):
+        logger.error("[Send] File not found: %s", file_path)
+        await safe_edit(query, "❌ فایل دانلودشده پیدا نشد!")
+        db_save(user_id, url, label, title_for_db, 0, "file_not_found")
+        return
+
     try:
         size_mb = os.path.getsize(file_path) / (1024 * 1024)
-    except OSError:
-        size_mb = 0.0
+        logger.info("[Send] File size: %.2f MB", size_mb)
+    except OSError as e:
+        logger.error("[Send] Size check failed: %s", e)
+        await safe_edit(query, "❌ نتونستم اندازه فایل رو بررسی کنم.")
+        db_save(user_id, url, label, title_for_db, 0, "size_error")
+        return
 
     if size_mb > MAX_FILE_SIZE_MB:
         safe_remove(file_path)
@@ -622,24 +635,51 @@ async def _send_video(
         return
 
     await safe_edit(query, f"📤 در حال آپلود ({size_mb:.1f} MB)...")
+    
+    upload_success = False
+    max_retries = 3
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info("[Send] Upload attempt %d/%d", attempt, max_retries)
+            
+            with open(file_path, "rb") as video_file:
+                await context.bot.send_video(
+                    chat_id=query.message.chat_id,
+                    video=video_file,
+                    caption=f"🎬 {label} | {size_mb:.1f} MB",
+                    supports_streaming=True,
+                    read_timeout=300,
+                    write_timeout=300,
+                    connect_timeout=30,
+                )
+            
+            upload_success = True
+            logger.info("[Send] Upload success on attempt %d", attempt)
+            await safe_edit(query, "✅ ویدیو با موفقیت ارسال شد!")
+            db_save(user_id, url, label, title_for_db, size_mb, "ok")
+            break
+            
+        except Exception as exc:
+            logger.warning("[Send] Attempt %d/%d failed: %s", attempt, max_retries, exc)
+            
+            if attempt < max_retries:
+                logger.info("[Send] Waiting 3 seconds before retry...")
+                await safe_edit(query, f"⚠️ تلاش مجدد... ({attempt}/{max_retries - 1})")
+                await asyncio.sleep(3)
+            else:
+                logger.error("[Send] All upload attempts failed")
+                error_msg = str(exc)[:150]
+                await safe_edit(query, f"❌ خطا در ارسال فایل:\n{error_msg}")
+                db_save(user_id, url, label, title_for_db, size_mb, "send_error")
+    
+    # ✅ حذف فایل (حتی اگر ارسال ناموفق باشد)
     try:
-        with open(file_path, "rb") as video_file:
-            await context.bot.send_video(
-                chat_id=query.message.chat_id,
-                video=video_file,
-                caption=f"🎬 {label} | {size_mb:.1f} MB",
-                supports_streaming=True,
-                read_timeout=120,
-                write_timeout=120,
-            )
-        await safe_edit(query, "✅ ویدیو با موفقیت ارسال شد!")
-        db_save(user_id, url, label, title_for_db, size_mb, "ok")
-    except Exception as exc:
-        logger.error("Send error: %s", exc)
-        await safe_edit(query, f"❌ خطا در ارسال فایل: {str(exc)[:200]}")
-        db_save(user_id, url, label, title_for_db, size_mb, "send_error")
-    finally:
+        await asyncio.sleep(2)
         safe_remove(file_path)
+        logger.info("[Send] File cleaned up: %s", file_path)
+    except Exception as e:
+        logger.warning("[Send] Cleanup error: %s", e)
 
 # ══════════════════════════════════════════════════════
 #  توابع sync (اجرا در thread pool)
